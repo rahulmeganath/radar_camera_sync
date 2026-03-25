@@ -6,7 +6,6 @@ The Radar–Camera Synchronisation Dashboard is a tool designed to visualize and
 ## Project Structure
 ```
 ├── app_pyqt.py                # Main PyQt application
-├── app_streamlit.py           # Original Streamlit application (deprecated)
 ├── config.yaml                # Configuration file for the application
 ├── requirements.txt           # Python dependencies
 ├── backend/                   # Backend logic for data processing
@@ -59,12 +58,6 @@ python app_pyqt.py
 
 3. The GUI will launch, allowing you to load data and interact with the dashboard.
 
-### Optional: Running the Streamlit App (Deprecated)
-If you want to run the original Streamlit application:
-
-```bash
-streamlit run app_streamlit.py
-```
 
 ## Configuration
 The application uses a `config.yaml` file for settings such as frame drop thresholds, quality evaluation parameters, and radar configurations. Modify this file to customize the application's behavior.
