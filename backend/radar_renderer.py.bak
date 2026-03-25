@@ -1,0 +1,255 @@
+"""
+radar_renderer.py – Radar point cloud visualisation using Plotly.
+
+Supports four views:
+  1. Bird's-eye scatter (x vs y)
+  2. Range-Doppler heatmap
+  3. Velocity vs range scatter
+  4. Raw amplitude map (power/SNR)
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+
+logger = logging.getLogger(__name__)
+
+# Common theme
+_PAPER_BG = "#0d1117"
+_PLOT_BG  = "#161b22"
+_GRID_CLR = "#30363d"
+_TEXT_CLR = "#c9d1d9"
+_ACCENT   = "#58a6ff"
+
+_BASE_LAYOUT = dict(
+    paper_bgcolor=_PAPER_BG,
+    plot_bgcolor=_PLOT_BG,
+    font=dict(color=_TEXT_CLR, size=11),
+    margin=dict(l=50, r=20, t=40, b=50),
+)
+
+
+def load_radar_frame(radar_hdf5: Any,
+                      msg_id: int,
+                      cache: Any | None = None) -> pd.DataFrame:
+    """Load point cloud targets for msg_id, with optional cache."""
+    if cache is not None:
+        cached = cache.get(msg_id)
+        if cached is not None:
+            return cached
+
+    df = radar_hdf5.get_frame(int(msg_id))
+
+    if cache is not None:
+        cache.put(msg_id, df)
+
+    return df
+
+
+def _empty_figure(title: str) -> go.Figure:
+    fig = go.Figure()
+    fig.update_layout(
+        **_BASE_LAYOUT,
+        title=dict(text=f"{title} – No Data", font=dict(color=_TEXT_CLR)),
+        xaxis=dict(color=_TEXT_CLR, gridcolor=_GRID_CLR),
+        yaxis=dict(color=_TEXT_CLR, gridcolor=_GRID_CLR),
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 1. Bird's-eye scatter (x vs y)
+# ---------------------------------------------------------------------------
+
+def render_birds_eye(targets: pd.DataFrame,
+                      max_range: float = 150.0,
+                      max_lateral: float = 50.0,
+                      msg_id: int = 0,
+                      sync_ts: float = 0.0) -> go.Figure:
+    """Bird's-eye view: x (forward) vs y (lateral), color = RCS."""
+    if targets.empty or "x" not in targets.columns:
+        return _empty_figure("Bird's-Eye View")
+
+    color_col = "rcs" if "rcs" in targets.columns else None
+    colorscale = "Viridis"
+
+    tickfont_size = 10
+    
+    fig = go.Figure(go.Scattergl(
+        x=targets["x"].values,
+        y=targets["y"].values,
+        mode="markers",
+        marker=dict(
+            size=6,
+            color=targets[color_col].values if color_col else _ACCENT,
+            colorscale=colorscale,
+            showscale=True if color_col else False,
+            colorbar=dict(title=dict(text="RCS (dBsm)", font=dict(color=_TEXT_CLR, size=10)),
+                          tickfont=dict(color=_TEXT_CLR, size=9), len=0.9) if color_col else None,
+            opacity=1.0,
+            line=dict(width=0, color='white'), # sharp edges
+        ),
+        hovertemplate=(
+            "X: %{x:.1f} m<br>Y: %{y:.1f} m<br>"
+            + (f"RCS: %{{marker.color:.1f}} dBsm<br>" if color_col else "")
+            + "<extra></extra>"
+        ),
+    ))
+
+    fig.update_layout(
+        **_BASE_LAYOUT,
+        title="", # Title handled externally for stability
+        xaxis=dict(title="X — Forward (m)", range=[-5, max_range],
+                   color=_TEXT_CLR, gridcolor=_GRID_CLR, zeroline=True,
+                   zerolinecolor=_GRID_CLR),
+        yaxis=dict(title="Y — Lateral (m)", range=[-max_lateral, max_lateral],
+                   color=_TEXT_CLR, gridcolor=_GRID_CLR, zeroline=True,
+                   zerolinecolor=_GRID_CLR),
+        uirevision="constant", # Preserve zoom state across updates
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 2. Range-Doppler heatmap
+# ---------------------------------------------------------------------------
+
+def render_range_doppler(targets: pd.DataFrame,
+                          range_bins: int = 60,
+                          doppler_bins: int = 40,
+                          msg_id: int = 0) -> go.Figure:
+    """Heatmap of detections in range × radial_speed space."""
+    if targets.empty or "range" not in targets.columns or "radial_speed" not in targets.columns:
+        return _empty_figure("Range-Doppler")
+
+    r = targets["range"].values
+    v = targets["radial_speed"].values
+
+    # Histogram2d
+    fig = go.Figure(go.Histogram2d(
+        x=r, y=v,
+        nbinsx=range_bins, nbinsy=doppler_bins,
+        colorscale="Hot",
+        colorbar=dict(title=dict(text="Count", font=dict(color=_TEXT_CLR)),
+                      tickfont=dict(color=_TEXT_CLR)),
+    ))
+    fig.update_layout(
+        **_BASE_LAYOUT,
+        title="",
+        xaxis=dict(title="Range (m)", color=_TEXT_CLR, gridcolor=_GRID_CLR),
+        yaxis=dict(title="Radial Speed (m/s)", color=_TEXT_CLR, gridcolor=_GRID_CLR),
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 3. Velocity vs range scatter
+# ---------------------------------------------------------------------------
+
+def render_velocity_range(targets: pd.DataFrame, msg_id: int = 0) -> go.Figure:
+    """Scatter: range vs radial_speed, colored by SNR."""
+    if targets.empty or "range" not in targets.columns or "radial_speed" not in targets.columns:
+        return _empty_figure("Velocity vs Range")
+
+    color_col = "snr" if "snr" in targets.columns else None
+
+    fig = go.Figure(go.Scattergl(
+        x=targets["range"].values,
+        y=targets["radial_speed"].values,
+        mode="markers",
+        marker=dict(
+            size=5,
+            color=targets[color_col].values if color_col else _ACCENT,
+            colorscale="Plasma",
+            showscale=True if color_col else False,
+            colorbar=dict(title=dict(text="SNR (dB)", font=dict(color=_TEXT_CLR)),
+                          tickfont=dict(color=_TEXT_CLR)) if color_col else None,
+            opacity=1.0,
+        ),
+        hovertemplate="Range: %{x:.1f} m<br>Speed: %{y:.2f} m/s<extra></extra>",
+    ))
+    fig.update_layout(
+        **_BASE_LAYOUT,
+        title="",
+        xaxis=dict(title="Range (m)", color=_TEXT_CLR, gridcolor=_GRID_CLR),
+        yaxis=dict(title="Radial Speed (m/s)", color=_TEXT_CLR, gridcolor=_GRID_CLR,
+                   zeroline=True, zerolinecolor=_GRID_CLR),
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 4. Raw amplitude map (power / SNR)
+# ---------------------------------------------------------------------------
+
+def render_amplitude_map(targets: pd.DataFrame, msg_id: int = 0) -> go.Figure:
+    """Scatter: x vs y colored by power, sized by SNR."""
+    if targets.empty or "x" not in targets.columns:
+        return _empty_figure("Amplitude Map")
+
+    power = targets["power"].values if "power" in targets.columns else np.ones(len(targets))
+    snr   = targets["snr"].values   if "snr"   in targets.columns else np.ones(len(targets))
+    size  = np.clip(snr / snr.max() * 14 + 3, 3, 18) if snr.max() > 0 else np.full(len(targets), 6)
+
+    fig = go.Figure(go.Scattergl(
+        x=targets["x"].values,
+        y=targets["y"].values,
+        mode="markers",
+        marker=dict(
+            size=size,
+            color=power,
+            colorscale="Inferno",
+            showscale=True,
+            colorbar=dict(title=dict(text="Power (dB)", font=dict(color=_TEXT_CLR)),
+                          tickfont=dict(color=_TEXT_CLR)),
+            opacity=1.0,
+        ),
+        hovertemplate="X: %{x:.1f} m<br>Y: %{y:.1f} m<br>Power: %{marker.color:.1f}<extra></extra>",
+    ))
+    fig.update_layout(
+        **_BASE_LAYOUT,
+        title="",
+        xaxis=dict(title="X — Forward (m)", color=_TEXT_CLR, gridcolor=_GRID_CLR),
+        yaxis=dict(title="Y — Lateral (m)", color=_TEXT_CLR, gridcolor=_GRID_CLR),
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Router
+# ---------------------------------------------------------------------------
+
+VIEW_OPTIONS = {
+    "birds_eye":     "Bird's-Eye View",
+    "range_doppler": "Range-Doppler",
+    "velocity_range":"Velocity vs Range",
+    "amplitude":     "Amplitude Map",
+}
+
+
+def render_radar_panel(targets: pd.DataFrame,
+                        view: str = "birds_eye",
+                        msg_id: int = 0,
+                        sync_ts: float = 0.0,
+                        config: dict | None = None) -> go.Figure:
+    """Route to the correct radar renderer based on view name."""
+    cfg = config or {}
+    max_range   = cfg.get("max_range_m", 150.0)
+    max_lateral = cfg.get("max_lateral_m", 50.0)
+
+    if view == "birds_eye":
+        return render_birds_eye(targets, max_range, max_lateral, msg_id, sync_ts)
+    elif view == "range_doppler":
+        return render_range_doppler(targets, msg_id=msg_id)
+    elif view == "velocity_range":
+        return render_velocity_range(targets, msg_id=msg_id)
+    elif view == "amplitude":
+        return render_amplitude_map(targets, msg_id=msg_id)
+    else:
+        logger.warning("Unknown radar view: %s", view)
+        return _empty_figure(f"Unknown view: {view}")

@@ -1,0 +1,70 @@
+# Radar-Camera Synchronization Dashboard Configuration
+
+data:
+  camera_dir: "camera_bi_demo"
+  radar_dir: "radar_bi_demo"
+  sync_csv: "sync_camera_radar_steering_clean_new.csv"
+
+  # Auto-discovered from directory (patterns)
+  camera_timestamps_pattern: "camera_*_timestamps.csv"
+  camera_video_pattern: "camera_*.mp4"
+  camera_metadata_pattern: "camera_*_metadata.db"
+  camera_performance_pattern: "camera_*_performance.log"
+
+  radar_timestamps_pattern: "radar_*_timestamps.csv"
+  radar_hdf5_pattern: "radar_*.hdf5"
+  radar_log_pattern: "radar_*.log"
+
+exports:
+  dir: "exports"
+  aligned_csv: "exports/aligned_frame_table.csv"
+  metrics_json: "exports/sync_metrics_summary.json"
+  metrics_csv: "exports/sync_metrics_summary.csv"
+  report_pdf: "exports/sync_analysis_report.pdf"
+  video_export: "exports/synchronized_playback.mp4"
+
+# Sync quality — frame-relative thresholds
+# Thresholds are expressed as multiples of frame_period (1000 / camera_fps).
+# p95 < good_mult × frame_period → GOOD
+# good_mult – warn_mult           → WARNING
+# > warn_mult                     → BAD
+# Drift ≠ 0 (> drift_threshold_ms_per_min) → automatic WARNING override.
+quality:
+  camera_fps: 30.0               # Camera frame rate (Hz)
+  drift_threshold_ms_per_min: 0.5 # Absolute drift limit
+
+  tiers:
+    demo:                        # Demo / Visualisation
+      good_mult: 0.50           # p95 < 0.50 × 33.3 ms = 16.7 ms
+      warn_mult: 1.00           # p95 < 1.00 × 33.3 ms = 33.3 ms
+    fusion:                      # Perception Fusion
+      good_mult: 0.25           # p95 < 0.25 × 33.3 ms =  8.3 ms
+      warn_mult: 0.50           # p95 < 0.50 × 33.3 ms = 16.7 ms
+    tracking:                    # High-Precision Tracking
+      good_mult: 0.10           # p95 < 0.10 × 33.3 ms =  3.3 ms
+      warn_mult: 0.25           # p95 < 0.25 × 33.3 ms =  8.3 ms
+
+# Playback
+playback:
+  default_speed: 1.0
+  min_speed: 0.1
+  max_speed: 4.0
+  interval_ms: 50           # Dash interval tick (ms)
+  camera_cache_size: 10
+  radar_cache_size: 10
+
+# Frame drop detection
+frame_drop:
+  gap_multiplier: 1.5       # gap > 1.5 × expected_period → drop
+
+# Radar rendering defaults
+radar:
+  default_view: "birds_eye"  # birds_eye | range_doppler | velocity_range | amplitude
+  max_range_m: 150.0
+  max_lateral_m: 50.0
+
+# Server
+server:
+  host: "0.0.0.0"
+  port: 8050
+  debug: false
